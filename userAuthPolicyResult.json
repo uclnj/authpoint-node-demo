@@ -1,0 +1,17 @@
+{
+	"username": "jdoe",
+	"email": "jane.doe@example.com",
+	"hasPolicy": true,
+	"policyResponse": {
+		"password": true,
+		"otp": false,
+		"qrCode": true,
+		"push": true
+		},
+	"isInQuarantine": false,
+	"isAllowedToAuthenticate": true,
+	"isInSafeLocation": false,
+	"isInForgotToken": false,
+	"isBlocked": false,
+	"isOverallocated": false
+}
