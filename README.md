@@ -11,4 +11,7 @@ Once setup, start with _node authpoint-demo.js [username] [origin ip address]_
 
 If you have a policy object with network locations, this is where _origin ip address_ comes into play.
 
-After starting, node will request a bearer token.  Press F2 to initiate a push notification to the device you registered on the Authpoint users menu.
+After starting, node will request a bearer token.
+
+Press F2 to initiate a push notification to the device you registered on the Authpoint users menu.
+Press F3 to use a one-time password either from your WatchGuard app profile or key-fob token.
