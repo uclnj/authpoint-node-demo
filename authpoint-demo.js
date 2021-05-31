@@ -2,7 +2,11 @@ const qs = require('qs')
 const axios = require('axios')
 var assert = require('assert')
 const dotenv = require('dotenv')
+const prompt = require('prompt-sync')()
 const keypress = require('keypress')
+const {
+  uptime
+} = require('process')
 
 dotenv.config()
 
@@ -39,7 +43,9 @@ class WatchGuardAuthpoint extends AuthpointResources {
     this.origin = origin
     this.bearer = null
     // refresh every fiftyfive minutes but the API expires the authentication tokens hourly, set as needed
-    this.__refreshTimer = setInterval(() => { this.refreshBearerToken() }, 55 * (60 * 1000))
+    this.__refreshTimer = setInterval(() => {
+      this.refreshBearerToken()
+    }, 55 * (60 * 1000))
     this.getBearerToken()
   }
 
@@ -47,12 +53,16 @@ class WatchGuardAuthpoint extends AuthpointResources {
   __refreshTimer = null
   __allowPush = null
   __allowAuthenticate = null
+  __allowOTP = null
   __authHeaders = () => {
     TRANSACTION_HEADERS.headers['Authorization'] = 'Bearer ' + this.bearer
     TRANSACTION_HEADERS.headers['WatchGuard-API-Key'] = this.api_key
     return TRANSACTION_HEADERS
   }
-  __OAuth = () => { return Buffer.from(`${process.env.ACCESSID_RW}:${process.env.WGCPASSWORD}`, 'utf8').toString('base64') }
+
+  __OAuth = () => {
+    return Buffer.from(`${process.env.ACCESSID_RW}:${process.env.WGCPASSWORD}`, 'utf8').toString('base64')
+  }
 
   /**
    * returns {true} if the bearer token has been claimed,
@@ -60,7 +70,9 @@ class WatchGuardAuthpoint extends AuthpointResources {
    *
    * @memberof WatchGuardAuthpoint
    */
-  ready = () => { return this.__ready }
+  ready = () => {
+    return this.__ready
+  }
 
   /**
    * sets an interval timer to refresh the bearer each hour
@@ -72,7 +84,9 @@ class WatchGuardAuthpoint extends AuthpointResources {
     NOISE && console.log('::refreshBearerToken')
     clearInterval(this.__refreshTimer)
     await this.getBearerToken()
-    this.__refreshTimer = setInterval(() => { this.refreshBearerToken() }, 55 * (60 * 1000))
+    this.__refreshTimer = setInterval(() => {
+      this.refreshBearerToken()
+    }, 55 * (60 * 1000))
   }
 
   /**
@@ -85,8 +99,10 @@ class WatchGuardAuthpoint extends AuthpointResources {
     await axios
       .post(
         'https://api.usa.cloud.watchguard.com/oauth/token',
-        qs.stringify({ grant_type: 'client_credentials', scope: 'api-access' }),
-        {
+        qs.stringify({
+          grant_type: 'client_credentials',
+          scope: 'api-access'
+        }), {
           headers: {
             Authorization: `Basic ${this.__OAuth()}`,
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -120,7 +136,11 @@ class WatchGuardAuthpoint extends AuthpointResources {
       axios.post(`${this.base_api_url}/${this.accountId}/resources/${this.resourceId}/authenticationpolicy`, data, this.__authHeaders())
         .then(res => {
           this.__allowAuthenticate = res.data.isAllowedToAuthenticate
+          NOISE && console.log('isAllowedToAuthenticate: ' + this.__allowAuthenticate)
           this.__allowPush = res.data.policyResponse.push
+          NOISE && console.log('policyResponse::push: ' + this.__allowPush)
+          this.__allowOTP = res.data.policyResponse.otp
+          NOISE && console.log('policyResponse::otp: ' + this.__allowOTP)
           resolve(res.data)
         })
         .catch(error => {
@@ -141,8 +161,14 @@ class WatchGuardAuthpoint extends AuthpointResources {
    */
   async sendAuthenticationPush(data) {
     NOISE && console.log('::sendAuthenticationPush')
-    if (!this.__allowAuthenticate) { console.log('This user is not allowed to authenticate with authpoint.'); return }
-    if (!this.__allowPush) { console.log('This user is not allowed to authenticate through push.'); return }
+    if (!this.__allowAuthenticate) {
+      console.log('This user is not allowed to authenticate with authpoint.');
+      return
+    }
+    if (!this.__allowPush) {
+      console.log('This user is not allowed to authenticate through push.');
+      return
+    }
     assert.strictEqual(typeof (this.bearer), typeof (''))
     return new Promise((resolve, reject) => {
       axios.post(`${this.base_api_url}/${this.accountId}/resources/${this.resourceId}/transactions`, data, this.__authHeaders())
@@ -179,63 +205,142 @@ class WatchGuardAuthpoint extends AuthpointResources {
       }
     }
   }
+
+  /**
+   * attempt to authenticate against an OTP
+   *
+   * @date 2021-05-31
+   * @param {*} data
+   * @returns res.data JSON response either 
+   * { authenticationResult: 'AUTHORIZED' } or
+   * { "title": "[Authentication] MFA did not authorize", }
+   * why they don't just use 'auth': true or 'auth': false I have no idea...
+   * @memberof WatchGuardAuthpoint
+   */
+  async authenticateWithOTP(data) {
+    NOISE && console.log('::authenticateWithOTP')
+    if (!this.__allowAuthenticate) {
+      console.log('This user is not allowed to authenticate with authpoint.');
+      return
+    }
+    if (!this.__allowOTP) {
+      console.log('This user is not allowed to authenticate with an OTP code.');
+      return
+    }
+    assert.strictEqual(typeof (this.bearer), typeof (''))
+    return new Promise((resolve, reject) => {
+      axios.post(`${this.base_api_url}/${this.accountId}/resources/${this.resourceId}/otp`, data, this.__authHeaders())
+        .then(res => {
+          resolve(res.data)
+        })
+        .catch(error => {
+          console.log(error);
+          reject()
+        })
+    })
+  }
 }
 
 const args = process.argv.slice(2) ?? null
 
-if (!args[0] || !args[1]) { console.log('username origin required'); process.exit() }
+if (!args[0] || !args[1]) {
+  console.log('username origin required');
+  process.exit()
+}
 
 let __wg = new WatchGuardAuthpoint(args[0], args[1])
 
 keypress(process.stdin)
 
 process.stdin.on('keypress', async function (ch, key) {
-  if (key.name == 'f1') { process.exit() }
+  if (key.name == 'f1') {
+    process.exit()
+  }
   if (key.name == 'f2') {
     if (__wg.ready()) {
       var data = JSON.stringify({
         'login': args[0],
-        'type': 'PUSH', 'originIpAddress': args[1],
-        'clientInfoRequest': { 'machineName': '', 'osVersion': '', 'domain': '' }
+        'type': 'PUSH',
+        'originIpAddress': args[1],
+        'clientInfoRequest': {
+          'machineName': '',
+          'osVersion': '',
+          'domain': ''
+        }
       })
       //# get the users policy to see if they are allowed to auth/push
-      await __wg.getUserAuthenticationPolicy()
-        .then(async res => {
-          NOISE && console.log(`${args[0]} ${res.hasPolicy ? 'has' : 'does not have'} an MF policy and ${res.isAllowedToAuthenticate ? 'is' : 'is not'} allowed to authenticate.`)
-        }).catch(error => {
-          throw 'Failed to get users auth policy.'
-        })
-      // push it baby
+      await __wg.getUserAuthenticationPolicy().then(async res => {
+        NOISE && console.log('got policy.')
+      }).catch(error => {
+        throw 'Failed to get users auth policy.'
+      })
       await __wg.sendAuthenticationPush(data)
         .then(async transactionId => {
           NOISE && console.log('transaction pushed, awaiting users response...')
           // within the first 1000ms, the WG API will return a series of useless status flags so I added an intentional
           // delay of 1.5 seconds before I begin polling the sytem
           await APITIMER(1500)
-          let iterations = 0, res
+          let iterations = 0,
+            res
           while (iterations++ < QUERY_WAIT_CYCLES) {
             res = await __wg.requestTransactionIDResult(transactionId)
             if (res?.status == 202 && res?.title.includes('processing')) console.log(res.title) // can remove these - just for affect
             if (res?.status == 202 && res?.title.includes('device')) console.log(res.title) // can remove these - just for affect
             // the user authorized - notice the WG API uses actual text, not status codes to reflect the action
-            if (res?.pushResult == 'AUTHORIZED') { console.log('User Authorized Push'); break; }
+            if (res?.pushResult == 'AUTHORIZED') {
+              console.log('User Authorized Push');
+              break;
+            }
             // the user denied the transaction - the DENIED comes from the method, NOT the WG API
-            if (res?.pushResult == 'DENIED') { console.log('User Denied Push'); break; }
+            if (res?.pushResult == 'DENIED') {
+              console.log('User Denied Push');
+              break;
+            }
             // literally, do nothing while waiting for the user
             if (iterations < 4) await APITIMER(3500)
           }
           NOISE && console.log('no longer checking, I hope you got a good result..')
         })
-        .catch(error => { throw error })
+        .catch(error => {
+          throw error
+        })
+    } else {
+      console.log('wait for a bearer refresh or give up hope.')
     }
-    else {
-      console.log('ready is reporting no, wait for a bearer refresh or give up hope.')
+  }
+  if (key.name == 'f3') {
+    if (__wg.ready()) {
+      let otp = prompt('Enter the current OTP in app or from your key-fob: ')
+      if (otp.length <= 6) {
+        var data = JSON.stringify({
+          'login': args[0],
+          'otp': otp,
+          'originIpAddress': args[1]
+        })
+        //# get the users policy to see if they are allowed to auth/push
+        await __wg.getUserAuthenticationPolicy().then(async res => {
+          NOISE && console.log('got policy.')
+        }).catch(error => {
+          throw 'Failed to get users auth policy.'
+        })
+        await __wg.authenticateWithOTP(data).then((res) => {
+          if (res?.authenticationResult == 'AUTHORIZED') {
+            console.log('OPT was verified and authorized.')
+          } else {
+            console.log('OPT failed to authorize.')
+          }
+        })
+      } else {
+        console.log('otp codes cannot be longer than six numbers, try again.')
+      }
+    } else {
+      console.log('wait for a bearer refresh or give up hope.')
     }
   }
 })
 
+console.log('Press F3 to use an OTP (keyfob)')
 console.log('Press F2 to send an authpoint authentication push notification')
 console.log('Press F1 to terminate')
 process.stdin.setRawMode(true)
 process.stdin.resume()
-
